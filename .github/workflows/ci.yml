@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Validar o script
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checagem de sintaxe
+        run: bash -n bench.sh
+
+      - name: ShellCheck (apenas erros)
+        run: shellcheck -S error bench.sh
