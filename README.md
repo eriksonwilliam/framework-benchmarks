@@ -54,14 +54,53 @@ dotnet   ███████████████████████�
 throughput; Spring na JVM é o mais pesado para subir (era esperado — é o
 framework mais "cheio"). Nenhum é "o melhor": depende do que pesa no seu caso.
 
-## E a imagem nativa (GraalVM)?
+## Nativo (GraalVM) — números reais
 
-Spring e Quarkus também compilam para **imagem nativa**, o que muda o jogo:
-startup em **milissegundos** e memória numa **fração** da JVM. Isso **não foi
-medido aqui** porque exige a toolchain do GraalVM (`native-image`), que não
-estava disponível na máquina de teste — a compilação nativa é feita na CI de
-cada projeto. O mesmo vale para o **.NET Native AOT**. Este comparativo cobre o
-modo **JVM/CLR**, que é o mais comum no dia a dia.
+Spring e Quarkus também compilam para **imagem nativa** (AOT) com o GraalVM
+`native-image` (Oracle GraalVM 21). Compilei os dois binários e medi com a mesma
+metodologia. O resultado muda o jogo em **startup** e **memória**:
+
+### Startup — JVM vs. Nativo (menor é melhor)
+
+```
+quarkus-native  ███ 469 ms
+spring-native   ███ 490 ms
+quarkus (JVM)   ████████████████ 2382 ms
+spring  (JVM)   ████████████████████████████████████████████ 6822 ms
+```
+
+### Memória ociosa — JVM vs. Nativo (menor é melhor)
+
+```
+quarkus-native  ███████ 33 MB
+spring-native   █████████████████ 78 MB
+quarkus (JVM)   █████████████████████████ 114 MB
+spring  (JVM)   ████████████████████████████████████████ 185 MB
+```
+
+### Tabela — o que a compilação nativa muda
+
+| Serviço          |    Startup |  Memória |   Throughput |
+| ---------------- | ---------: | -------: | -----------: |
+| spring **(JVM)** |    6822 ms |   185 MB |   3203 req/s |
+| spring-native    | **490 ms** | **78 MB**|   2778 req/s |
+| quarkus **(JVM)**|    2382 ms |   114 MB |   3748 req/s |
+| quarkus-native   | **469 ms** | **33 MB**|   3182 req/s |
+
+**Leitura rápida:** o nativo **derruba o startup** (Spring: ~14× mais rápido;
+Quarkus: ~5×) e corta a memória para uma **fração** (Spring 2,4× mais leve;
+Quarkus 3,5×) — exatamente o que faz sentido para **serverless / escala a zero /
+cold start**. Em troca, o **throughput sustentado cai um pouco** (~10–15%): a JVM
+tem *JIT* que aquece sob carga e otimiza o código quente, coisa que o AOT não
+faz. Ou seja: nativo ganha em **subir rápido e ocupar pouco**; a JVM quente ainda
+lidera em **vazão de pico**. Escolha pelo que pesa no seu caso.
+
+> **Como foi medido:** binários gerados com `mvn -Pnative` (Spring) e
+> `mvn package -Dnative` (Quarkus). O startup nativo é o **melhor de 3 execuções
+> aquecidas** — a *primeira* execução de um `.exe` novo no Windows é penalizada
+> pelo antivírus varrendo o binário (chegava a ~3 s), o que não reflete o startup
+> real do processo. O mesmo racional de AOT vale para o **.NET Native AOT**, não
+> medido aqui.
 
 ## Metodologia
 
@@ -79,7 +118,9 @@ Para cada serviço, o script [`bench.sh`](bench.sh):
 
 - Máquina de desenvolvimento (Windows 11, 8 vCPU).
 - JDK: Temurin 21. .NET SDK: 9.0. Serviços em modo release/produção.
-- Medição de **uma execução** por serviço.
+- Imagens nativas: **Oracle GraalVM 21** (`native-image` 21.0.11).
+- JVM/CLR: medição de **uma execução** por serviço. Nativo: melhor de 3
+  (descartando a penalidade de antivírus na 1ª execução).
 
 ## ⚠️ Ressalvas (leia antes de tirar conclusões)
 
@@ -103,6 +144,15 @@ Para cada serviço, o script [`bench.sh`](bench.sh):
 go install github.com/codesenberg/bombardier@latest
 
 BASE=/caminho/para/os/repos bash bench.sh
+```
+
+Para os binários **nativos** (precisa do GraalVM `native-image` no `JAVA_HOME`):
+
+```bash
+# Spring  -> target/catalog-service.exe
+cd spring-boot-graalvm-native && mvn -B -Pnative -DskipTests package native:compile
+# Quarkus -> target/quarkus-catalog-0.1.0-runner.exe
+cd quarkus-catalog && mvn -B package -Dnative -DskipTests
 ```
 
 ## Licença
