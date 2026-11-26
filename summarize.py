@@ -84,7 +84,7 @@ def main(directory: Path) -> None:
     for framework, products, size in sorted(payload):
         lines.append(f"| {LABELS[framework]} | {products} | {size} |")
 
-    (directory / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (directory / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     print("\n".join(lines))
 
 
