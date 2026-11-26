@@ -19,3 +19,11 @@ jobs:
 
       - name: ShellCheck (apenas erros)
         run: shellcheck -S error bench.sh
+
+      - name: Resumo reproduz o summary.md versionado
+        run: |
+          for dir in results/*/; do
+            cp "$dir/summary.md" /tmp/expected.md
+            python3 summarize.py "$dir" > /dev/null
+            diff -u /tmp/expected.md "$dir/summary.md"
+          done

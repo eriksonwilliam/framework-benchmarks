@@ -1,0 +1,13 @@
+date: 2026-11-26T04:31:42Z
+os: MINGW64_NT-10.0-26300 NoTeDaRk 3.6.10-5a1665c8.x86_64 2026-09-28 10:40 UTC x86_64 Msys
+cpu: 11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz
+logical_cpus: 8
+memory_gb: 23,7
+java: openjdk version "21.0.13" 2026-10-20 LTS
+dotnet: 9.0.321
+bombardier: bombardier version unspecified windows/amd64
+rounds=5 warmup_s=20 duration_s=15 concurrency="10 50" seed_products=100
+commit spring-boot-graalvm-native: a0c222c
+commit quarkus-catalog: da039ea
+commit ktor-catalog: 577fc55
+commit dotnet-aspire-catalog: cd9f60b

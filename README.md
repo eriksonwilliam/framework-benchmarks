@@ -9,39 +9,72 @@ implementam a **mesma API** (um catálogo de produtos), medindo **startup**,
 - [ktor-catalog](https://github.com/eriksonwilliam/ktor-catalog) — Kotlin · Ktor
 - [dotnet-aspire-catalog](https://github.com/eriksonwilliam/dotnet-aspire-catalog) — C# · .NET 9
 
-> Como a API e a arquitetura são idênticas, a diferença medida é essencialmente
-> do **framework/runtime** — não da implementação.
+> A API, o contrato e o payload são idênticos (100 produtos, 8.385 bytes,
+> conferidos a cada rodada). **O armazenamento não é**: os três serviços JVM
+> usam `ConcurrentHashMap`, o .NET usa o provider InMemory do EF Core. Parte
+> da diferença do .NET pode vir disso, não do runtime.
 
-## Resultados (modo JVM / CLR)
+## Resultados — 26/11/2026 (modo JVM / CLR)
 
-### Startup — do lançamento até a primeira resposta HTTP 200 (menor é melhor)
+Mediana de **5 rodadas**; entre parênteses, mínimo–máximo. Dado bruto em
+[`results/2026-11-26/raw.csv`](results/2026-11-26/raw.csv), resumo em
+[`summary.md`](results/2026-11-26/summary.md) e ambiente em
+[`environment.txt`](results/2026-11-26/environment.txt). Zero erros e zero
+respostas não-2xx em todas as 40 medições.
 
-```
-dotnet   ███████ 1193 ms
-ktor     ███████████ 1906 ms
-quarkus  ██████████████ 2382 ms
-spring   ████████████████████████████████████████ 6822 ms
-```
+### Startup e memória
 
-### Memória ociosa — RSS após subir, antes de carga (menor é melhor)
+| Framework | Startup (ms) | RSS ocioso (MB) | RSS após carga (MB) |
+| --- | ---: | ---: | ---: |
+| .NET 9 | 888 (869–1072) | 72 (72–72) | 101 (96–115) |
+| Ktor | 1357 (1316–1456) | 119 (119–136) | 276 (273–278) |
+| Quarkus | 1776 (1561–1899) | 118 (117–132) | 194.5 (155–265) |
+| Spring Boot 3 | 4444 (4245–5475) | 165 (163–187) | 205.5 (200–211) |
 
-```
-dotnet   ████████████████ 72 MB
-quarkus  █████████████████████████ 114 MB
-ktor     █████████████████████████████ 136 MB
-spring   ████████████████████████████████████████ 185 MB
-```
+### GET /products com 100 produtos, 50 conexões por 15 s
 
-### Throughput — GET /products, 50 conexões por 8s (maior é melhor)
+| Framework | req/s | p50 (ms) | p95 (ms) | p99 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Quarkus | 3998.6 (3475.1–4081.4) | 10.55 | 29.69 | 43.44 |
+| Spring Boot 3 | 3621.9 (3176.8–3672) | 11.6 | 31.15 | 44.3 |
+| Ktor | 3481.3 (3189.6–3755.2) | 11.69 | 31.89 | 46.26 |
+| .NET 9 | 3316.6 (3274–3453.6) | 13.1 | 28.99 | **39.66** |
 
-```
-quarkus  ████████████████████████████████████████ 3748 req/s
-spring   ██████████████████████████████████ 3203 req/s
-ktor     ██████████████████████████████████ 3168 req/s
-dotnet   █████████████████████████████ 2731 req/s
-```
+Com 10 conexões a ordem de vazão é a mesma (Quarkus 3800, Ktor 3279, Spring
+3277, .NET 2652 req/s); ver `summary.md`.
 
-### Tabela
+### Leitura
+
+- **.NET** sobe mais rápido e ocupa menos memória, antes e depois da carga.
+  Tem a menor vazão, mas o **melhor p99** e a menor variação entre rodadas
+  a 50 conexões.
+- **Quarkus** lidera a vazão nas duas concorrências.
+- **Ktor** é o segundo mais rápido para subir, mas termina a carga com o
+  maior RSS (276 MB).
+- **Spring Boot** continua o mais lento para subir (~4,4 s), com vazão no
+  meio do grupo.
+- As diferenças de vazão ficam entre 10% e 20%; a variação entre rodadas do
+  mesmo serviço chega a ~15%. Não dá para declarar um vencedor universal.
+
+## O que mudou em relação à medição de julho/2026
+
+A medição anterior (tabelas abaixo, em "Histórico") tinha três problemas:
+
+1. **Uma rodada por serviço** e 3 s de aquecimento junto da medição.
+2. **Loja vazia**: nenhum serviço popula dados na subida, então
+   `GET /products` serializava `[]`. Media a pilha HTTP, não um endpoint.
+3. O script encerrava **qualquer processo** escutando na porta 8080.
+
+Agora: 5 rodadas com a ordem dos serviços rotacionada, 20 s de aquecimento
+separado, 100 produtos populados pela própria API, duas concorrências, CSV
+bruto, porta própria (18080) e encerramento só do processo lançado.
+
+Na loja populada, o Spring subiu mais rápido (6822 → 4444 ms) e o .NET deixou
+de ficar tão atrás em vazão (2731 → 3317 req/s a 50 conexões).
+
+## Histórico (julho/2026, uma rodada, loja vazia)
+
+Mantido para comparação; **não use como resultado**.
 
 | Framework     | Startup (ms) | Memória (MB) | Throughput (req/s) | p99 (ms) |
 | ------------- | -----------: | -----------: | -----------------: | -------: |
@@ -50,11 +83,10 @@ dotnet   ███████████████████████�
 | Quarkus       |         2382 |          114 |               3748 |    47.33 |
 | Spring Boot 3 |         6822 |          185 |               3203 |    57.99 |
 
-**Leitura rápida:** .NET arranca mais rápido e mais leve; Quarkus lidera o
-throughput; Spring na JVM é o mais pesado para subir (era esperado — é o
-framework mais "cheio"). Nenhum é "o melhor": depende do que pesa no seu caso.
+## Nativo (GraalVM) — histórico, julho/2026
 
-## Nativo (GraalVM) — números reais
+> Medição de julho/2026, com a metodologia antiga (uma rodada, loja vazia).
+> Não foi reproduzida em 26/11/2026.
 
 Spring e Quarkus também compilam para **imagem nativa** (AOT) com o GraalVM
 `native-image` (Oracle GraalVM 21). Compilei os dois binários e medi com a mesma
@@ -104,56 +136,44 @@ lidera em **vazão de pico**. Escolha pelo que pesa no seu caso.
 
 ## Metodologia
 
-Para cada serviço, o script [`bench.sh`](bench.sh):
+[`bench.sh`](bench.sh), para cada rodada e cada serviço (ordem rotacionada):
 
-1. **Startup:** marca o tempo entre lançar o processo e a primeira resposta
-   `200` em `GET /products` (inclui o boot da JVM/CLR).
-2. **Memória:** lê o RSS (working set) do processo que está escutando na porta,
-   em repouso, logo após subir.
-3. **Throughput:** um *warm-up* de 3s e então
-   [`bombardier`](https://github.com/codesenberg/bombardier) com 50 conexões por
-   8s em `GET /products`; registra req/s médio e a latência p99.
+1. **Startup**: tempo entre lançar o processo e a primeira resposta `200` em
+   `GET /products` (inclui o boot da JVM/CLR).
+2. **RSS ocioso**: working set do processo logo após subir.
+3. **Dados**: 100 produtos criados por `POST /products`; o tamanho da
+   resposta é registrado para conferir que os quatro devolvem o mesmo payload.
+4. **Aquecimento**: 20 s de carga com 50 conexões, fora da medição.
+5. **Medição**: [`bombardier`](https://github.com/codesenberg/bombardier) por
+   15 s em cada concorrência (10 e 50), com latência p50/p95/p99, contagem de
+   não-2xx e de erros, e RSS depois da carga.
 
-## Ambiente da medição
+[`summarize.py`](summarize.py) (só biblioteca padrão) calcula mediana, mínimo
+e máximo entre rodadas.
 
-- Máquina de desenvolvimento (Windows 11, 8 vCPU).
-- JDK: Temurin 21. .NET SDK: 9.0. Serviços em modo release/produção.
-- Imagens nativas: **Oracle GraalVM 21** (`native-image` 21.0.11).
-- JVM/CLR: medição de **uma execução** por serviço. Nativo: melhor de 3
-  (descartando a penalidade de antivírus na 1ª execução).
+## Ressalvas
 
-## ⚠️ Ressalvas (leia antes de tirar conclusões)
-
-- São números **indicativos de uma única rodada** numa máquina de dev — não um
-  laboratório controlado. Use como ordem de grandeza, não como verdade absoluta.
-- A JVM tem *warm-up* (JIT): o throughput tende a subir depois de mais tempo sob
-  carga. O *warm-up* aqui é curto.
-- Startup e memória variam com disco, cache e o que mais está rodando na máquina.
-- Reproduza no **seu** ambiente antes de decidir qualquer coisa.
+- Notebook (i7-1165G7, 8 threads, Windows 11), com cliente de carga e
+  serviço na mesma máquina. Ordem de grandeza, não laboratório.
+- Armazenamento diferente no .NET (EF Core InMemory), como dito acima.
+- Uma única rota de leitura; escrita e regras de negócio não foram medidas.
+- Nativo não foi reproduzido nesta rodada.
 
 ## Como reproduzir
 
 ```bash
-# tenha os 4 repositórios como pastas irmãs e cada um buildado:
-#   spring-boot-graalvm-native  -> mvn package -DskipTests
-#   quarkus-catalog             -> mvn package -DskipTests
-#   ktor-catalog                -> mvn package -DskipTests
-#   dotnet-aspire-catalog       -> dotnet publish -c Release -o publish
+# os 4 repositórios como pastas irmãs, cada um buildado:
+#   spring-boot-graalvm-native, quarkus-catalog, ktor-catalog -> mvn package -DskipTests
+#   dotnet-aspire-catalog -> dotnet publish src/Catalog.Api -c Release -o publish
+go install github.com/codesenberg/bombardier@v1.2.6
 
-# instale o bombardier (load tool):
-go install github.com/codesenberg/bombardier@latest
-
-BASE=/caminho/para/os/repos bash bench.sh
+BASE=.. ROUNDS=5 bash bench.sh            # PYTHON=python onde python3 não existir
+python3 summarize.py results/$(date +%Y-%m-%d)
 ```
 
-Para os binários **nativos** (precisa do GraalVM `native-image` no `JAVA_HOME`):
-
-```bash
-# Spring  -> target/catalog-service.exe
-cd spring-boot-graalvm-native && mvn -B -Pnative -DskipTests package native:compile
-# Quarkus -> target/quarkus-catalog-0.1.0-runner.exe
-cd quarkus-catalog && mvn -B package -Dnative -DskipTests
-```
+Variáveis: `ROUNDS`, `WARMUP_SECONDS`, `DURATION_SECONDS`, `CONCURRENCY`,
+`SEED_PRODUCTS`, `BENCH_PORT` (padrão 18080), `OUT_DIR`. O script recusa
+começar se a porta já estiver em uso.
 
 ## Licença
 
